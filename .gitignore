@@ -12,3 +12,8 @@ experimental
 real_data
 final_test/
 *.pt
+
+.idea/
+.venv/
+__pycache__/
+
