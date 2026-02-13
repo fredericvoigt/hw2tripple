@@ -8,6 +8,13 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 #    was main_config/main.py ziehen könnte.
 # ============================================================
 import types, sys
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="The default value of the antialias parameter.*",
+    category=UserWarning,
+    module="torchvision.transforms.functional"
+)
 
 
 # ============================================================
