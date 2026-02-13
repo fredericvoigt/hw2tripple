@@ -101,7 +101,7 @@ def get_args():
     p.add_argument("--batch-size", type=int, default=int(os.getenv("BATCH_SIZE", "64")))
     p.add_argument("--lr", type=float, default=float(os.getenv("LR", "1e-4")))
     p.add_argument("--weight-decay", type=float, default=float(os.getenv("WEIGHT_DECAY", "0.05")))
-    p.add_argument("--mask-ratio", type=float, default=float(os.getenv("MASK_RATIO", "0.75")))
+    p.add_argument("--mask-ratio", type=float, default=float(os.getenv("MASK_RATIO", "0.05")))
     p.add_argument("--seed", type=int, default=int(os.getenv("SEED", "42")))
     p.add_argument("--save-every", type=int, default=int(os.getenv("SAVE_EVERY", "1")))
 
@@ -345,7 +345,11 @@ class MaskedPretrain(nn.Module):
         enc = self.base.transformer(tokens_masked)   # (B,196,dim)
         pred = self.recon_head(enc)                  # (B,196,768)
 
-        target = patchify(x_norm, patch_size=16).to(pred.dtype)
+        mean = torch.tensor([0.485, 0.456, 0.406], device=x_norm.device)[None, :, None, None]
+        std = torch.tensor([0.229, 0.224, 0.225], device=x_norm.device)[None, :, None, None]
+        x_raw = (x_norm * std + mean).clamp(0, 1)
+
+        target = patchify(x_raw, 16).to(pred.dtype)
         loss = F.mse_loss(pred[mask], target[mask])
         return loss
 
@@ -491,7 +495,7 @@ def main():
     embed_dim = int(base.decoder_query.weight.shape[1])  # meist 256
     mim = MaskedPretrain(base, embed_dim=embed_dim, mask_ratio=args.mask_ratio, patch_dim=3 * 16 * 16).to(device)
 
-    opt = torch.optim.AdamW(mim.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(mim.parameters(), lr=args.lr, weight_decay=0) # args.weight_decay)
 
     # ---- logging config ----
     cfg_dict = {
