@@ -9,7 +9,8 @@ import random
 import subprocess
 from pathlib import Path
 from data_ram_loader import build_ram_dataloaders_split
-
+import os
+import subprocess
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -74,10 +75,11 @@ def get_args():
     p.add_argument("--no-wandb", action="store_true")
 
     # W&B parameter (alles auch über ENV)
-    p.add_argument("--wandb-project", type=str, default=os.getenv("WANDB_PROJECT", "netlistify-mim"))
+    p.add_argument("--wandb-project", type=str, default=os.getenv("WANDB_PROJECT", "semicon"))
+    p.add_argument("--wandb-entity", type=str, default=os.getenv("WANDB_ENTITY", "frederic-voigt"))
     p.add_argument("--wandb-name", type=str, default=os.getenv("WANDB_NAME", ""))
     p.add_argument("--wandb-tags", type=str, default=os.getenv("WANDB_TAGS", ""))  # comma separated
-    p.add_argument("--wandb-mode", type=str, default=os.getenv("WANDB_MODE", "offline"),
+    p.add_argument("--wandb-mode", type=str, default=os.getenv("WANDB_MODE", "online"),
                    choices=["online", "offline", "disabled"])
     p.add_argument("--wandb-dir", type=str, default=os.getenv("WANDB_DIR", ""))
 
@@ -281,6 +283,33 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
 
+    run = None
+    use_wandb = args.wandb and args.wandb_mode != "disabled"
+
+    if use_wandb:
+        # Hardcoded key (wie du wolltest)
+        WANDB_KEY = "97646993dfb3ed347361401308dd9377b8c7365a"
+
+        # erzwingt online/offline (sonst übernimmt W&B evtl. alte env)
+        os.environ["WANDB_MODE"] = args.wandb_mode
+
+        # Login wie früher (CLI)
+        subprocess.run(["wandb", "login", WANDB_KEY], check=False)
+
+        import wandb
+        # optional: neue backend-api (kannst du drin lassen oder weglassen)
+        # wandb.require("core")
+
+        run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            config=vars(args),
+            # mode=args.wandb_mode,  # optional zusätzlich
+        )
+
+        # falls du eine run-id irgendwo brauchst:
+        # print("W&B run id:", run.id)
+
     # --- Import euer Modell ---
     import main_config as config
     import main as main_module
@@ -422,12 +451,16 @@ def main():
 
         if run is not None:
             import wandb
-            log_dict = {"loss/train_epoch": mean_loss, "epoch": ep}
-            if val_loss is not None:
-                log_dict["loss/val_epoch"] = val_loss
-            if test_loss is not None:
-                log_dict["loss/test_epoch"] = test_loss
-            wandb.log(log_dict, step=global_step)
+            wandb.log(
+                {
+                    "epoch": ep,
+                    "loss/train_epoch": mean_loss,
+                    "loss/val_epoch": val_loss,
+                    "loss/test_epoch": test_loss,
+                    "epoch_time_sec": dt,
+                },
+                step=ep,
+            )
 
         if run is not None:
             import wandb
