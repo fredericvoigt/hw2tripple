@@ -495,7 +495,7 @@ def main():
     embed_dim = int(base.decoder_query.weight.shape[1])  # meist 256
     mim = MaskedPretrain(base, embed_dim=embed_dim, mask_ratio=args.mask_ratio, patch_dim=3 * 16 * 16).to(device)
 
-    opt = torch.optim.AdamW(mim.parameters(), lr=args.lr, weight_decay=0) # args.weight_decay)
+    opt = torch.optim.AdamW(mim.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     # ---- logging config ----
     cfg_dict = {
