@@ -148,12 +148,26 @@ def find_checkpoint() -> Path:
     raise FileNotFoundError("Kein Checkpoint gefunden. Gib --ckpt-path an oder lege weights/... korrekt ab.")
 
 def collect_images_recursively(root: Path, max_images: int = 0) -> list[Path]:
-    exts = {".jpg", ".jpeg", ".png", ".webp"}
-    paths = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts]
+    """
+    Robust & schnell auf Cluster: nutzt `find` statt pathlib.rglob/stat().
+    """
+    root = root.resolve()
+    cmd = [
+        "bash", "-lc",
+        # -L NICHT verwenden (sonst folgt es symlinks evtl. in loops)
+        f"find {sh_quote(str(root))} -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \\) -print"
+    ]
+    out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+    paths = [Path(line) for line in out.splitlines() if line.strip()]
     paths.sort()
     if max_images and max_images > 0:
         paths = paths[:max_images]
     return paths
+
+def sh_quote(s: str) -> str:
+    # minimal shell-quoting
+    return "'" + s.replace("'", "'\\''") + "'"
+
 
 def split_paths(paths: list[Path], train_pct: float, val_pct: float, test_pct: float, seed: int):
     rnd = random.Random(seed)
