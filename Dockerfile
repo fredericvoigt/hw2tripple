@@ -1,9 +1,13 @@
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 WORKDIR /code
 
+# --- build essentials for packages with native extensions (evdev, etc.) ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
-# Wichtig: torch/torchvision/torchaudio NICHT nochmal installieren, sonst überschreibst du ggf. das Base-Setup
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
