@@ -501,7 +501,6 @@ def main():
         "test_pct": args.test_pct,
         "use_pretrained": bool(args.use_pretrained and not args.no_pretrained),
         "pretrained_ckpt": ckpt_path_used,
-        "model_cfg": {k: getattr(cfg, k) for k in vars(cfg).keys()},
         "wandb_mode": args.wandb_mode,
         "wandb_project": args.wandb_project,
         "wandb_entity": args.wandb_entity,
