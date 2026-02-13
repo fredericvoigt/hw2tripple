@@ -9,17 +9,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # ============================================================
 import types, sys
 
-cfg = types.SimpleNamespace(
-    MODEL_STYLE="cnn",   # ckpt erwartet cnn
-    DEPTH=2,             # muss zum ckpt passen
-    NUM_HEADS=4,         # muss zum ckpt passen
-    EMBED_DIM=64,        # NUM_HEADS*EMBED_DIM = 256
-    RESULT_NUM=10,       # ckpt erwartet 10 queries
-    PATCH_SIZE=16,
-    DROPOUT=0.0,
-    CLASS_OUTPUT=0,
-)
-sys.modules["main_config"] = cfg
 
 # ============================================================
 # 1) Standard imports
@@ -459,28 +448,36 @@ def main():
 
     # ---- Euer Originalmodell bauen & ggf. weights laden ----
     # WICHTIG: erst NACH main_config patch importieren:
+    # --- Import original config + main ---
+    import main_config as config
     import main as main_module
 
+    # wir wollen CNN-style fürs MIM (sonst passt Tokenizer nicht)
+    config.MODEL_STYLE = "cnn"
+
     ckpt_path_used = ""
+    sd = None
+
     if args.use_pretrained and not args.no_pretrained:
         ckpt_path = Path(args.ckpt_path) if args.ckpt_path else find_checkpoint()
         ckpt_path_used = str(ckpt_path)
         print("Using pretrained checkpoint:", ckpt_path_used)
 
-        ckpt = torch.load(str(ckpt_path), map_location="cpu")
+        ckpt = torch.load(ckpt_path_used, map_location="cpu")
         sd = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
 
-        # RESULT_NUM aus checkpoint sicher übernehmen, bevor wir create_model bauen
+        # --- WICHTIG: RESULT_NUM aus checkpoint übernehmen (damit decoder_query passt) ---
         if "decoder_query.weight" in sd:
-            exp_q, exp_dim = sd["decoder_query.weight"].shape
-            cfg.RESULT_NUM = int(exp_q)  # <--- exakt wie ckpt
-            # embed_dim ist exp_dim, sollte 256 sein
-        base = main_module.create_model()
+            config.RESULT_NUM = int(sd["decoder_query.weight"].shape[0])
+            print("Checkpoint RESULT_NUM =", config.RESULT_NUM)
+
+    # jetzt erst Modell bauen (mit korrektem config.RESULT_NUM)
+    base = main_module.create_model()
+
+    if sd is not None:
         base.load_state_dict(sd, strict=True)
-        print("✅ checkpoint strict loaded")
     else:
         print("No-pretrained: random init (kein ckpt geladen)")
-        base = main_module.create_model()
 
     base = base.to(device)
 
