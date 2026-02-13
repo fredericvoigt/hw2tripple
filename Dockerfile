@@ -1,10 +1,10 @@
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /code
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements-lock.txt
+# Wichtig: torch/torchvision/torchaudio NICHT nochmal installieren, sonst überschreibst du ggf. das Base-Setup
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-# Beispiel: inference
-CMD ["python", "mymain.py"]
+CMD ["python", "pretrain_mim_wandb.py"]
