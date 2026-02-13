@@ -68,20 +68,9 @@ from PIL import Image, ImageOps
 from plotly.subplots import make_subplots
 from rich import print as print_tmp
 from scipy.optimize import linear_sum_assignment
-from scipy.spatial import distance
-from scoping import scoping
-from shapely import ops, union, union_all
-from shapely.geometry import LineString, MultiLineString, MultiPoint, Point, Polygon, box, mapping
-from sklearn.metrics import accuracy_score, classification_report
-from tabulate import tabulate
-from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
-from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary
-from torchmetrics import Accuracy
-from torchmetrics.classification import MulticlassAccuracy
-from torchvision.ops.boxes import complete_box_iou
+from shapely.geometry import Point, box
 from torchvision.utils import make_grid
-from tqdm import tqdm
+
 
 
 # write a context manager to prevent showing matplotlib plots
