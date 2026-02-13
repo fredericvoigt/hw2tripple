@@ -1,4 +1,7 @@
 from __future__ import annotations
+from tqdm import tqdm
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # ============================================================
 # 0) ABSOLUT WICHTIG: main_config patchen BEVOR irgendwas importiert,
@@ -59,6 +62,38 @@ def env_bool(name: str, default: bool) -> bool:
     if name not in os.environ:
         return default
     return os.environ[name].lower() in ("1", "true", "yes", "y", "on")
+
+WANDB_API_KEY = "97646993dfb3ed347361401308dd9377b8c7365a"
+
+def wandb_init_if_enabled(args, cfg_dict: dict):
+    # Wenn W&B aus: return None
+    if args.no_wandb or (not args.wandb) or args.wandb_mode == "disabled":
+        return None
+
+    # Optional: wo W&B lokal schreibt (Cluster)
+    if args.wandb_dir:
+        os.environ["WANDB_DIR"] = args.wandb_dir
+
+    # online/offline aus args (oder ENV)
+    os.environ["WANDB_MODE"] = args.wandb_mode
+    os.environ.setdefault("WANDB_START_METHOD", "thread")
+
+    # Login wie du es wolltest (CLI per subprocess)
+    subprocess.run(["wandb", "login", WANDB_API_KEY], check=False)
+
+    import wandb
+    tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+
+    run = wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_name or None,
+        tags=tags or None,
+        config=cfg_dict,
+        reinit=True,
+    )
+    return run
+
 
 def get_args():
     p = argparse.ArgumentParser()
@@ -197,22 +232,83 @@ def patchify(x: torch.Tensor, patch_size: int = 16) -> torch.Tensor:
 # ============================================================
 # 6) RAM Dataset (lädt ALLE images einmal in RAM)
 # ============================================================
-class RamImages(Dataset):
-    def __init__(self, paths: list[Path], transform):
-        self.paths = paths
-        self.transform = transform
-        self.data = []
+class RamImages(torch.utils.data.Dataset):
+    """
+    Lädt Bilder einmalig in RAM (als uint8 RGB), gibt bei __getitem__ Tensor nach Transform aus.
+    Loggt Fortschritt während dem Laden + optional wandb.
+    """
+    def __init__(self, paths, tf, wandb_run=None, log_every=2000, max_errors=200):
+        self.paths = list(paths)
+        self.tf = tf
+        self.images = []
+        self.bad = []
+        self.wandb_run = wandb_run
+        self.log_every = int(log_every)
+        self.max_errors = int(max_errors)
 
-        for p in self.paths:
-            img = Image.open(p).convert("RGB")
-            x = self.transform(img)  # (3,224,224) float32 normalized
-            self.data.append(x)
+        t0 = time.time()
+        last_log_t = t0
+
+        # tqdm Progressbar
+        for i, p in enumerate(tqdm(self.paths, desc="RAM preload", unit="img"), start=1):
+            try:
+                # robustes Öffnen
+                with open(p, "rb") as f:
+                    img = Image.open(f).convert("RGB")
+                    # als bytes im RAM (PIL Image) behalten; alternativ np.uint8 speichern
+                    self.images.append(img.copy())
+            except Exception as e:
+                self.bad.append((str(p), repr(e)))
+                if len(self.bad) <= 5:
+                    print(f"[RAM preload] skip broken: {p} | {e}")
+                if len(self.bad) >= self.max_errors:
+                    raise RuntimeError(f"Zu viele kaputte Bilder ({len(self.bad)}). Abbruch.") from e
+                continue
+
+            # periodisches Logging
+            if (i % self.log_every) == 0:
+                now = time.time()
+                dt = now - t0
+                rate = i / max(dt, 1e-6)
+                eta = (len(self.paths) - i) / max(rate, 1e-6)
+                msg = f"[RAM preload] loaded={i}/{len(self.paths)} | {rate:.2f} img/s | ETA {eta/60:.1f} min | bad={len(self.bad)}"
+                print(msg)
+
+                if self.wandb_run is not None:
+                    try:
+                        import wandb
+                        wandb.log({
+                            "load/loaded": i,
+                            "load/total": len(self.paths),
+                            "load/img_per_sec": rate,
+                            "load/eta_min": eta / 60.0,
+                            "load/bad": len(self.bad),
+                        })
+                    except Exception:
+                        pass
+
+                last_log_t = now
+
+        # final summary
+        dt = time.time() - t0
+        print(f"[RAM preload] DONE: loaded={len(self.images)}/{len(self.paths)} | bad={len(self.bad)} | time={dt/60:.1f} min")
+
+        # falls du die bad-files als text speichern willst:
+        if self.bad:
+            try:
+                Path("bad_images.txt").write_text("\n".join([f"{p}\t{err}" for p, err in self.bad]), encoding="utf-8")
+                print("[RAM preload] wrote bad_images.txt")
+            except Exception:
+                pass
 
     def __len__(self):
-        return len(self.data)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        img = self.images[idx]
+        x = self.tf(img)  # Tensor
+        return x
+
 
 # ============================================================
 # 7) MIM Model (nutzt euer CNN+Transformer encoder aus main.py)
@@ -312,6 +408,19 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
 
+    # --- W&B run (oder None) MUSS VOR dem RAM-Laden existieren ---
+    run = None
+    use_wandb = (args.wandb and not args.no_wandb and args.wandb_mode != "disabled")
+    if use_wandb:
+        cfg_dict_for_wandb = vars(args).copy()
+        run = wandb_init_if_enabled(args, cfg_dict_for_wandb)
+        # (optional) wenn du summary setzen willst:
+        try:
+            import wandb
+            wandb.summary["host"] = os.uname().nodename if hasattr(os, "uname") else "unknown"
+        except Exception:
+            pass
+
     out_dir = (ROOT / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -335,9 +444,10 @@ def main():
 
     # ---- ALLES in RAM laden ----
     print("Loading images into RAM ...")
-    train_ds = RamImages(train_paths, tf)
-    val_ds = RamImages(val_paths, tf) if len(val_paths) else None
-    test_ds = RamImages(test_paths, tf) if len(test_paths) else None
+    train_ds = RamImages(train_paths, tf, wandb_run=run, log_every=2000)
+    val_ds = RamImages(val_paths, tf, wandb_run=run, log_every=2000)
+    test_ds = RamImages(test_paths, tf, wandb_run=run, log_every=2000)
+
     print("RAM load done.")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
