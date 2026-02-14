@@ -16,6 +16,19 @@ warnings.filterwarnings(
     module="torchvision.transforms.functional"
 )
 
+import warnings
+
+class _IgnoreAntialiasWarning:
+    def __init__(self):
+        self._orig = warnings.showwarning
+
+    def __call__(self, message, category, filename, lineno, file=None, line=None):
+        msg = str(message)
+        if "default value of the antialias parameter" in msg and "torchvision" in filename:
+            return
+        return self._orig(message, category, filename, lineno, file, line)
+
+warnings.showwarning = _IgnoreAntialiasWarning()
 
 # ============================================================
 # 1) Standard imports
